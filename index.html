@@ -14,14 +14,39 @@
     button:disabled { background: #ccc; }
     input { width: 100%; padding: 8px; margin: 5px 0 10px 0; box-sizing: border-box; }
     .result-box { padding: 10px; background: #e8f4fd; border-left: 5px solid #0066cc; margin-top: 10px; }
+    .config-toggle { text-align: right; margin-bottom: 10px; }
+    .config-toggle a { font-size: 12px; color: #666; text-decoration: underline; cursor: pointer; }
   </style>
 </head>
 <body>
 
-  <h2>ナイトレジャー向け 顔認証入店デモ</h2>
+  <div class="config-toggle">
+    <a id="reset-config-link">⚙️ Kintone接続設定を再入力する</a>
+  </div>
 
-  <!-- カメラエリア -->
-  <div class="card">
+  <!-- 【安全対策】Kintone接続設定入力フォーム（初回のみ表示） -->
+  <div class="card" id="config-card">
+    <h2>Kintone 接続設定</h2>
+    <p style="font-size: 13px; color: #555;">Kintoneの接続情報を入力してください。設定情報はブラウザ内（localStorage）に安全に保存されます。</p>
+    
+    <label>Kintoneサブドメイン（または全URL）</label>
+    <input type="text" id="cfg-domain" placeholder="例: https://xxxx.cybozu.com">
+    
+    <label>APIトークン</label>
+    <input type="password" id="cfg-token" placeholder="両アプリに権限のあるトークン">
+    
+    <label>顧客マスター アプリID</label>
+    <input type="number" id="cfg-master-id" placeholder="例: 1">
+    
+    <label>来店履歴 アプリID</label>
+    <input type="number" id="cfg-history-id" placeholder="例: 2">
+    
+    <button id="save-cfg-btn">設定を保存してカメラを起動</button>
+  </div>
+
+  <!-- カメラ ＆ メイン操作エリア -->
+  <div class="card" id="main-card" style="display:none;">
+    <h2>ナイトレジャー向け 顔認証入店デモ</h2>
     <video id="video" autoplay playsinline muted></video>
     <button id="scan-btn" disabled>AIモデル読み込み中...</button>
   </div>
@@ -44,64 +69,113 @@
   </div>
 
 <script>
-  // Kintone設定 (ご自身の環境に合わせて変更してください)
-  const KINTONE_DOMAIN = 'https://8kpwl8gbtw2p.cybozu.com/';
-  const API_TOKEN = 'qY6i8iOfhj91RVkFd5ToRDiQjTYou892SjhojYen'; // 顧客マスターと来店履歴の両方に権限のあるトークン
-  const API_TOKEN2 = 'oYM1uPgeJt5eYuOKWoQzsYuFwA2IWvNVthYyNZZK'; // 顧客マスターと来店履歴の両方に権限のあるトークン
-  const MASTER_APP_ID = 322; // 顧客マスターアプリID
-  const HISTORY_APP_ID = 323; // 来店履歴アプリID
+  let KINTONE_DOMAIN = '';
+  let API_TOKEN = '';
+  let MASTER_APP_ID = '';
+  let HISTORY_APP_ID = '';
 
-  let currentDescriptor = null; // 今回撮影した顔の特徴量
-  let registeredCustomers = []; // Kintoneから取得した全顧客の顔特徴量
+  let currentDescriptor = null;
+  let registeredCustomers = [];
 
   const video = document.getElementById('video');
   const scanBtn = document.getElementById('scan-btn');
 
-  // 1. AIモデルのロードとカメラ起動
-  async function init() {
-    // CDNから学習済み軽量軽量モデルを読み込み
-    const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
-    await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
-    await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
-    await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+  // 1. 設定情報の読み込みチェックと画面制御
+  function checkConfig() {
+    KINTONE_DOMAIN = localStorage.getItem('kintone_domain') || '';
+    API_TOKEN = localStorage.getItem('kintone_token') || '';
+    MASTER_APP_ID = localStorage.getItem('kintone_master_id') || '';
+    HISTORY_APP_ID = localStorage.getItem('kintone_history_id') || '';
 
-    // カメラ起動
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
-    video.srcObject = stream;
-
-    // Kintoneから既存の顧客データ（顔特徴量）を取得
-    await loadKintoneMasterData();
-
-    scanBtn.innerText = "顔認証・スキャン開始";
-    scanBtn.disabled = false;
+    if (KINTONE_DOMAIN && API_TOKEN && MASTER_APP_ID && HISTORY_APP_ID) {
+      document.getElementById('config-card').style.display = 'none';
+      document.getElementById('main-card').style.display = 'block';
+      initApp();
+    } else {
+      document.getElementById('config-card').style.display = 'block';
+      document.getElementById('main-card').style.display = 'none';
+    }
   }
 
-  // 2. Kintoneから全顧客の顔特徴量をロード
+  // 設定の保存処理
+  document.getElementById('save-cfg-btn').addEventListener('click', () => {
+    let domain = document.getElementById('cfg-domain').value.trim();
+    if (domain && !domain.startsWith('http')) {
+      domain = 'https://' + domain;
+    }
+    const token = document.getElementById('cfg-token').value.trim();
+    const masterId = document.getElementById('cfg-master-id').value.trim();
+    const historyId = document.getElementById('cfg-history-id').value.trim();
+
+    if (!domain || !token || !masterId || !historyId) {
+      alert('すべての項目を入力してください');
+      return;
+    }
+
+    localStorage.setItem('kintone_domain', domain);
+    localStorage.setItem('kintone_token', token);
+    localStorage.setItem('kintone_master_id', masterId);
+    localStorage.setItem('kintone_history_id', historyId);
+
+    checkConfig();
+  });
+
+  // 設定再入力リンク
+  document.getElementById('reset-config-link').addEventListener('click', () => {
+    if (confirm('保存されているKintone接続設定をクリアして再設定しますか？')) {
+      localStorage.clear();
+      location.reload();
+    }
+  });
+
+  // 2. AIモデルのロードとカメラ起動
+  async function initApp() {
+    try {
+      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      video.srcObject = stream;
+
+      await loadKintoneMasterData();
+
+      scanBtn.innerText = "顔認証・スキャン開始";
+      scanBtn.disabled = false;
+    } catch (err) {
+      console.error("初期化エラー:", err);
+      alert("カメラの起動またはAIモデルの読み込みに失敗しました");
+    }
+  }
+
+  // 3. Kintoneから既存顧客データ（顔特徴量）を取得
   async function loadKintoneMasterData() {
     try {
       const res = await fetch(`${KINTONE_DOMAIN}/k/v1/records.json?app=${MASTER_APP_ID}`, {
         headers: { 'X-Cybozu-API-Token': API_TOKEN }
       });
       const data = await res.json();
-      registeredCustomers = data.records.map(r => ({
-        id: r.customer_id.value,
-        name: r.customer_name.value,
-        descriptor: new Float32Array(JSON.parse(r.face_descriptor.value))
-      }));
-      console.log(`Kintoneから ${registeredCustomers.length} 件の顧客データをロードしました`);
+      if (data.records) {
+        registeredCustomers = data.records.map(r => ({
+          id: r.customer_id.value,
+          name: r.customer_name.value,
+          descriptor: new Float32Array(JSON.parse(r.face_descriptor.value))
+        }));
+      }
     } catch (e) {
-      console.error("Kintoneデータ読み込みエラー:", e);
+      console.error("Kintoneデータ取得エラー:", e);
+      alert("Kintoneからのデータ取得に失敗しました。ドメインとトークンを確認してください。");
     }
   }
 
-  // 3. 顔照合ボタン押下時の処理
+  // 4. 顔照合処理
   scanBtn.addEventListener('click', async () => {
     scanBtn.disabled = true;
     scanBtn.innerText = "照合中...";
     document.getElementById('result-card').style.display = 'block';
     document.getElementById('new-customer-form').style.display = 'none';
 
-    // カメラフレームから顔を検出＆128次元特徴量抽出
     const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
                                    .withFaceLandmarks()
                                    .withFaceDescriptor();
@@ -113,11 +187,10 @@
       return;
     }
 
-    currentDescriptor = detection.descriptor; // 抽出した128個の数値配列
+    currentDescriptor = detection.descriptor;
 
-    // 既存顧客と類似度比較（ユークリッド距離）
     let bestMatch = null;
-    let minDistance = 0.5; // しきい値（0.5未満なら同一人物と判断）
+    let minDistance = 0.5; // ユークリッド距離のしきい値
 
     registeredCustomers.forEach(customer => {
       const distance = faceapi.euclideanDistance(currentDescriptor, customer.descriptor);
@@ -128,7 +201,6 @@
     });
 
     if (bestMatch) {
-      // 【再来店パターン】
       document.getElementById('status-message').innerHTML = `
         <div class="result-box">
           <h3>ご来店ありがとうございます！【再来店】</h3>
@@ -136,10 +208,8 @@
           <p><strong>顧客ID:</strong> ${bestMatch.id}</p>
         </div>
       `;
-      // 来店履歴アプリに自動登録
       await addVisitHistory(bestMatch.id, bestMatch.name, "再来店");
     } else {
-      // 【新規来店パターン】
       document.getElementById('status-message').innerHTML = `
         <div class="result-box" style="border-color:#28a745;">
           <h3>未登録のお客様です【新規】</h3>
@@ -153,48 +223,57 @@
     scanBtn.innerText = "顔認証・スキャン開始";
   });
 
-  // 4. 新規顧客登録ボタン処理
+  // 5. 新規登録ボタン処理
   document.getElementById('register-btn').addEventListener('click', async () => {
-    const name = document.getElementById('new-name').value;
-    const company = document.getElementById('new-company').value;
-    const phone = document.getElementById('new-phone').value;
+    const name = document.getElementById('new-name').value.trim();
+    const company = document.getElementById('new-company').value.trim();
+    const phone = document.getElementById('new-phone').value.trim();
 
     if (!name) { alert("お名前を入力してください"); return; }
 
-    const newCustomerId = 'CUST_' + Date.now(); // ユニークID作成
+    const newCustomerId = 'CUST_' + Date.now();
 
-    // A. 顧客マスターに保存
     const masterRecord = {
       app: MASTER_APP_ID,
       record: {
         customer_id: { value: newCustomerId },
         customer_name: { value: name },
-        face_descriptor: { value: JSON.stringify(Array.from(currentDescriptor)) } // 配列をJSON文字列に変換
+        company_name: { value: company },
+        phone: { value: phone },
+        face_descriptor: { value: JSON.stringify(Array.from(currentDescriptor)) }
       }
     };
 
-    await fetch(`${KINTONE_DOMAIN}/k/v1/record.json`, {
-      method: 'POST',
-      headers: { 'X-Cybozu-API-Token': [API_TOKEN,API_TOKEN2], 'Content-Type': 'application/json' },
-      body: JSON.stringify(masterRecord)
-    });
+    try {
+      await fetch(`${KINTONE_DOMAIN}/k/v1/record.json`, {
+        method: 'POST',
+        headers: { 'X-Cybozu-API-Token': API_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify(masterRecord)
+      });
 
-    // B. 来店履歴アプリに初回記録を追加
-    await addVisitHistory(newCustomerId, name, "新規");
+      await addVisitHistory(newCustomerId, name, "新規");
 
-    alert("登録が完了しました！");
-    // メモリ上のデータも更新
-    registeredCustomers.push({ id: newCustomerId, name: name, descriptor: currentDescriptor });
-    document.getElementById('result-card').style.display = 'none';
+      alert("新規登録と初回来店記録が完了しました！");
+      registeredCustomers.push({ id: newCustomerId, name: name, descriptor: currentDescriptor });
+      document.getElementById('result-card').style.display = 'none';
+      document.getElementById('new-name').value = '';
+      document.getElementById('new-company').value = '';
+      document.getElementById('new-phone').value = '';
+    } catch (e) {
+      console.error("登録エラー:", e);
+      alert("Kintoneへの登録に失敗しました");
+    }
   });
 
-  // 5. 来店履歴レコードを作成する共通関数
+  // 6. 来店履歴レコード作成
   async function addVisitHistory(customerId, customerName, visitType) {
     const historyRecord = {
       app: HISTORY_APP_ID,
       record: {
         customer_id: { value: customerId },
+        customer_name: { value: customerName },
         visit_datetime: { value: new Date().toISOString() },
+        visit_type: { value: visitType }
       }
     };
 
@@ -204,14 +283,13 @@
         headers: { 'X-Cybozu-API-Token': API_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify(historyRecord)
       });
-      console.log("来店履歴を保存しました");
     } catch (e) {
-      console.error("来店履歴保存エラー:", e);
+      console.error("来店履歴登録エラー:", e);
     }
   }
 
-  // アプリ起動
-  init();
+  // アプリ起動確認
+  checkConfig();
 </script>
 </body>
 </html>
