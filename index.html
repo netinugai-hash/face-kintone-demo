@@ -32,9 +32,12 @@
     <label>Kintoneサブドメイン（または全URL）</label>
     <input type="text" id="cfg-domain" placeholder="例: https://xxxx.cybozu.com">
     
-    <label>APIトークン</label>
-    <input type="password" id="cfg-token" placeholder="両アプリに権限のあるトークン">
+    <label>顧客マスター用 APIトークン</label>
+    <input type="password" id="cfg-master-token" placeholder="顧客マスタのトークン">
     
+    <label>来店履歴用 APIトークン</label>
+    <input type="password" id="cfg-history-token" placeholder="来店履歴のトークン">
+ 
     <label>顧客マスター アプリID</label>
     <input type="number" id="cfg-master-id" placeholder="例: 1">
     
@@ -70,7 +73,8 @@
 
 <script>
   let KINTONE_DOMAIN = '';
-  let API_TOKEN = '';
+  let MASTER_API_TOKEN = '';
+  let HISTORY_API_TOKEN = '';
   let MASTER_APP_ID = '';
   let HISTORY_APP_ID = '';
 
@@ -83,11 +87,12 @@
   // 1. 設定情報の読み込みチェックと画面制御
   function checkConfig() {
     KINTONE_DOMAIN = localStorage.getItem('kintone_domain') || '';
-    API_TOKEN = localStorage.getItem('kintone_token') || '';
+    MASTER_API_TOKEN = localStorage.getItem('kintone_master_token') || '';
+    HISTORY_API_TOKEN = localStorage.getItem('kintone_history_token') || '';
     MASTER_APP_ID = localStorage.getItem('kintone_master_id') || '';
     HISTORY_APP_ID = localStorage.getItem('kintone_history_id') || '';
 
-    if (KINTONE_DOMAIN && API_TOKEN && MASTER_APP_ID && HISTORY_APP_ID) {
+    if (KINTONE_DOMAIN && MASTER_API_TOKEN && HISTORY_API_TOKEN && MASTER_APP_ID && HISTORY_APP_ID) {
       document.getElementById('config-card').style.display = 'none';
       document.getElementById('main-card').style.display = 'block';
       initApp();
@@ -103,17 +108,19 @@
     if (domain && !domain.startsWith('http')) {
       domain = 'https://' + domain;
     }
-    const token = document.getElementById('cfg-token').value.trim();
+    const mastertoken = document.getElementById('cfg-master-token').value.trim();
+    const historytoken = document.getElementById('cfg-history-token').value.trim();
     const masterId = document.getElementById('cfg-master-id').value.trim();
     const historyId = document.getElementById('cfg-history-id').value.trim();
 
-    if (!domain || !token || !masterId || !historyId) {
+    if (!domain || !mastertoken || !historytoken || !masterId || !historyId) {
       alert('すべての項目を入力してください');
       return;
     }
 
     localStorage.setItem('kintone_domain', domain);
-    localStorage.setItem('kintone_token', token);
+    localStorage.setItem('kintone_master-token', mastertoken);
+    localStorage.setItem('kintone_history-token', historytoken);
     localStorage.setItem('kintone_master_id', masterId);
     localStorage.setItem('kintone_history_id', historyId);
 
@@ -153,7 +160,7 @@
   async function loadKintoneMasterData() {
     try {
       const res = await fetch(`${KINTONE_DOMAIN}/k/v1/records.json?app=${MASTER_APP_ID}`, {
-        headers: { 'X-Cybozu-API-Token': API_TOKEN }
+        headers: { 'X-Cybozu-API-Token': MASTER_API_TOKEN }
       });
       const data = await res.json();
       if (data.records) {
@@ -247,7 +254,7 @@
     try {
       await fetch(`${KINTONE_DOMAIN}/k/v1/record.json`, {
         method: 'POST',
-        headers: { 'X-Cybozu-API-Token': API_TOKEN, 'Content-Type': 'application/json' },
+        headers: { 'X-Cybozu-API-Token': MASTER_API_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify(masterRecord)
       });
 
@@ -280,7 +287,7 @@
     try {
       await fetch(`${KINTONE_DOMAIN}/k/v1/record.json`, {
         method: 'POST',
-        headers: { 'X-Cybozu-API-Token': API_TOKEN, 'Content-Type': 'application/json' },
+        headers: { 'X-Cybozu-API-Token': [MASTER_API_TOKEN,HISTORY_API_TOKEN], 'Content-Type': 'application/json' },
         body: JSON.stringify(historyRecord)
       });
     } catch (e) {
