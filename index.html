@@ -2,13 +2,13 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>顔認証 Kintone 来店管理</title>
-  
-  <!-- 無料の顔認識ライブラリ face-api.js を読み込み -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>顔認証 Kintone 来店管理システム</title>
+
+  <!-- 無料の顔認識ライブラリ face-api.js をCDNから読み込み -->
   <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
-  
- <style>
+
+  <style>
     * { box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 15px; max-width: 600px; margin: auto; background: #f4f6f8; color: #333; }
     .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 20px; }
@@ -25,7 +25,7 @@
 </head>
 <body>
 
-<div class="config-toggle">
+  <div class="config-toggle">
     <a id="reset-config-link">⚙️ 接続設定を変更する</a>
   </div>
 
@@ -35,7 +35,7 @@
     <p style="font-size: 12px; color: #666;">初回のみ設定が必要です。設定情報は端末のブラウザ内（localStorage）にのみ保存されます。</p>
     
     <label>Kintoneサブドメイン（または全URL）</label>
-    <input type="text" id="cfg-domain" placeholder="例: https://XXXXXXXXXX.cybozu.com">
+    <input type="text" id="cfg-domain" placeholder="例: https://8kpwl8gbtw2p.cybozu.com">
     
     <label>顧客マスター アプリID</label>
     <input type="number" id="cfg-master-id" placeholder="例: 322">
@@ -52,7 +52,7 @@
     <button id="save-cfg-btn">設定を保存してカメラを起動</button>
   </div>
 
-<!-- カメラ ＆ スキャン領域 -->
+  <!-- カメラ ＆ スキャン領域 -->
   <div class="card" id="main-card" style="display:none;">
     <h2>顔認証入店管理</h2>
     <video id="video" autoplay playsinline muted></video>
@@ -166,31 +166,32 @@
       alert("カメラ起動またはAIモデルの読込に失敗しました");
     }
   }
-  // 2. Kintoneから既存顧客データ（顔特徴量）を取得
+
+  // 3. 顧客マスター取得（GET通信: Content-Typeなし）
   async function loadKintoneMasterData() {
     try {
       const url = `${KINTONE_DOMAIN}/k/v1/records.json?app=${MASTER_APP_ID}`;
       const res = await fetch(url, {
-        method:'GET',
+        method: 'GET',
         headers: { 'X-Cybozu-API-Token': MASTER_TOKEN }
       });
       const data = await res.json();
-      
+
       if (data.records) {
         registeredCustomers = data.records.map(r => ({
-          id: r.Faceid.value,
+          id: r.customer_id.value,
           name: r.customer_name.value,
           descriptor: new Float32Array(JSON.parse(r.face_descriptor.value))
         }));
-        console.log(`顧客マスターから ${registeredCustomers.length} 件取得しました`);
+        console.log(`マスターデータ ${registeredCustomers.length} 件ロード完了`);
       }
     } catch (e) {
-      console.error("Kintoneデータ取得エラー:", e);
+      console.error("Kintone読み込みエラー:", e);
       alert("顧客マスターの取得に失敗しました。接続設定を確認してください。");
     }
   }
 
-  // 3. 顔照合処理
+  // 4. 顔照合処理
   scanBtn.addEventListener('click', async () => {
     scanBtn.disabled = true;
     scanBtn.innerText = "照合中...";
@@ -209,9 +210,8 @@
     }
 
     currentDescriptor = detection.descriptor;
-
     let bestMatch = null;
-    let minDistance = 0.5; // ユークリッド距離の判定しきい値
+    let minDistance = 0.5; // 判定しきい値
 
     registeredCustomers.forEach(customer => {
       const distance = faceapi.euclideanDistance(currentDescriptor, customer.descriptor);
@@ -222,7 +222,6 @@
     });
 
     if (bestMatch) {
-      // 【再来店パターン】
       document.getElementById('status-message').innerHTML = `
         <div class="result-box">
           <h3>ご来店ありがとうございます！【再来店】</h3>
@@ -232,7 +231,6 @@
       `;
       await addVisitHistory(bestMatch.id, bestMatch.name, "再来店");
     } else {
-      // 【新規来店パターン】
       document.getElementById('status-message').innerHTML = `
         <div class="result-box" style="border-color:#28a745;">
           <h3>未登録のお客様です【新規】</h3>
@@ -246,7 +244,7 @@
     scanBtn.innerText = "顔認証・スキャン開始";
   });
 
-  // 4. 新規顧客登録処理
+  // 5. 新規顧客登録処理（POST通信）
   document.getElementById('register-btn').addEventListener('click', async () => {
     const name = document.getElementById('new-name').value.trim();
     const company = document.getElementById('new-company').value.trim();
@@ -255,7 +253,6 @@
     if (!name) { alert("お名前を入力してください"); return; }
 
     const newCustomerId = 'CUST_' + Date.now();
-
     const masterRecord = {
       app: MASTER_APP_ID,
       record: {
@@ -268,7 +265,7 @@
     };
 
     try {
-      await fetch(`${KINTONE_DOMAIN}/k/v1/record.json`, {
+      const res = await fetch(`${KINTONE_DOMAIN}/k/v1/record.json`, {
         method: 'POST',
         headers: { 
           'X-Cybozu-API-Token': MASTER_TOKEN, 
@@ -276,6 +273,8 @@
         },
         body: JSON.stringify(masterRecord)
       });
+
+      if (!res.ok) throw new Error("顧客マスター登録失敗");
 
       await addVisitHistory(newCustomerId, name, "新規");
 
@@ -291,34 +290,42 @@
     }
   });
 
-  // 5. 来店履歴レコードの作成（ルックアップ対応）
+  // 6. 来店履歴の登録処理（ルックアップ lookup: true 付き）
   async function addVisitHistory(customerId, customerName, visitType) {
     const historyRecord = {
       app: HISTORY_APP_ID,
       record: {
-        customer_id: { value: customerId }, // 来店履歴のルックアップフィールド
+       customer_id: { value: customerId }, // 来店履歴のルックアップフィールド
         visit_datetime: { value: new Date().toISOString() },
         visit_type: { value: visitType }
       }
     };
 
     try {
-      await fetch(`${KINTONE_DOMAIN}/k/v1/record.json`, {
+      const res = await fetch(`${KINTONE_DOMAIN}/k/v1/record.json`, {
         method: 'POST',
         headers: { 
-          'X-Cybozu-API-Token': `${HISTORY_TOKEN},${MASTER_TOKEN}` ,
+          'X-Cybozu-API-Token': `${HISTORY_TOKEN},${MASTER_TOKEN}`,
           'Content-Type': 'application/json' 
         },
         body: JSON.stringify(historyRecord)
       });
-      console.log("来店履歴を保存しました");
+
+      if (!res.ok) {
+        const err = await res.json();
+        console.error("来店履歴エラー詳細:", err);
+      } else {
+        console.log("来店履歴を正常に保存しました");
+      }
     } catch (e) {
-      console.error("来店履歴登録エラー:", e);
+      console.error("来店履歴通信エラー:", e);
     }
   }
 
-  // アプリ実行
-  initApp();
+  // 起動実行
+  window.addEventListener('DOMContentLoaded', () => {
+    checkConfig();
+  });
 </script>
 </body>
 </html>
