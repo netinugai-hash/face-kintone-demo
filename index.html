@@ -93,7 +93,7 @@
 
       if (data.records) {
         registeredCustomers = data.records.map(r => ({
-          id: r.customer_id.value,
+          id: r.Faceid.value,
           name: r.customer_name.value,
           descriptor: new Float32Array(JSON.parse(r.face_descriptor.value))
         }));
